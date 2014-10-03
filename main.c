@@ -71,6 +71,7 @@
 // Simplelink includes
 #include "simplelink.h"
 #include "netcfg.h"
+#include "device.h"
 
 // Driverlib includes
 #include "hw_ints.h"
@@ -99,6 +100,13 @@
 #include "tmp006drv.h"
 #include "bma222drv.h"
 #include "pinmux.h"
+//New Includes
+#include "mqtt/MQTTClient.h"
+
+#define MQTT_TOPIC "ticc3200"
+#define DEVICE_STRING "ticc3200"
+
+#define min(X,Y) ((X) < (Y) ? (X) : (Y))
 
 #define APPLICATION_VERSION              "1.1.0"
 #define APP_NAME                         "Out of Box"
@@ -1014,8 +1022,89 @@ static void ReadDeviceConfiguration()
 //! \return                        None
 //
 //****************************************************************************
+Client c;
+char i=0;
+static unsigned char ASCIIToPin(char* str) {
+	unsigned char p;
+	if (str == 0) {
+		return 0;
+	}
+	if (str[0] > '9' || str[0] < '0' || str[1] > '9' || str[1] < '0')
+		return 0;
+	p = ((str[0] - '0') * 10);
+	p += (str[1] - '0');
+	return p;
+}
+static void PinToASCII(char pin, char* str) {
+	if (str == 0)
+		return;
+	str[0] = '0' + (pin / 10);
+	str[1] = '0' + (pin % 10);
+}
+
+#define BUFF_SIZE 32
+static void messageArrived(MessageData* data) {
+	char buff[BUFF_SIZE];
+	unsigned char pinNum;
+	unsigned char ucPin;
+	unsigned int uiGPIOPort;
+	unsigned char ucGPIOPin;
+	unsigned char ucGPIOValue;
+
+	char *msg = data->message->payload;
+	strncpy(buff, msg, min(BUFF_SIZE, data->message->payloadlen));
+	buff[data->message->payloadlen] = 0;
+
+	if (data->message->payloadlen < 4) {//Too short
+		UART_PRINT("Short MSG: %s", buff);
+	}
+	//Modify a pin
+	if (msg[0] == 'P') {
+		pinNum = ASCIIToPin(&msg[1]);
+		//Get pin ports
+		GPIO_IF_GetPortNPin(pinNum, &uiGPIOPort, &ucGPIOPin);
+
+		if (msg[3] != ':') {
+			UART_PRINT("Invalid Msg: %s", buff);
+		}
+		if (msg[4] == 'H') { //Set High
+			ucGPIOValue = 1;
+			GPIO_IF_Set(pinNum, uiGPIOPort, ucGPIOPin, ucGPIOValue);
+			UART_PRINT("Pin %d High\n\r", pinNum);
+		}
+		else if (msg[4] == 'L') { //Set Low
+			ucGPIOValue = 0;
+			GPIO_IF_Set(pinNum, uiGPIOPort, ucGPIOPin, ucGPIOValue);
+			UART_PRINT("Pin %d low\n\r", pinNum);
+		}
+		else if (msg[4] == '?') { //Return Status
+			//ucGPIOValue = GPIO_IF_Get(pinNum, uiGPIOPort, ucGPIOPin);
+
+			MQTTMessage msg;
+			msg.dup = 0;
+			msg.id = i++;
+			buff[0] = 'S';
+			PinToASCII(pinNum, &buff[1]);
+			buff[3] = ' ';
+			buff[4] = GPIO_IF_Get(pinNum, uiGPIOPort, ucGPIOPin) ? 'H' : 'L';
+			msg.payload = &buff;
+			msg.payloadlen = 5;
+			msg.qos = QOS0;
+			msg.retained = 0;
+			int rc = MQTTPublish(&c, MQTT_TOPIC, &msg);
+			UART_PRINT("Pin %d Status: %c rc: %d\n\r", pinNum, buff[4], rc);
+		}
+	}
+}
+
 static void OOBTask(void *pvParameters)
 {
+	Network n;
+
+	int rc = 0;
+	unsigned char buf[100];
+	unsigned char readbuf[100];
+
     long   lRetVal = -1;
 
     //Read Device Mode Configuration
@@ -1029,27 +1118,49 @@ static void OOBTask(void *pvParameters)
         LOOP_FOREVER();
     }
 
-    //Handle Async Events
+	NewNetwork(&n);
+	UART_PRINT("Connecting Socket\n\r");
+	//
+	//Begin Doesn't work
+	//
+	//Setup Secure connection information
+//	SlSockSecureFiles_t sockSecureFiles;
+//	sockSecureFiles.secureFiles[0] = 0;
+//	sockSecureFiles.secureFiles[1] = 0;
+//	sockSecureFiles.secureFiles[2] = (char *)"/cert/mosquitto.der";
+//	sockSecureFiles.secureFiles[3] = 0;
+//	rc = TLSConnectNetwork(&n, "test.mosquitto.org", 8883, &sockSecureFiles, SL_SO_SEC_METHOD_SSLv3_TLSV1_2, SL_SEC_MASK_TLS_RSA_WITH_AES_256_CBC_SHA, 0);
+	//
+	//End Doesn't Work
+	//
+
+	//Works - Unsecured
+	rc = ConnectNetwork(&n, "test.mosquitto.org", 1883);
+	UART_PRINT("Opened TCP Port to mqtt broker with return code %d\n\rConnecting to MQTT broker\n\r", rc);
+
+	MQTTClient(&c, &n, 1000, buf, 100, readbuf, 100);
+	MQTTPacket_connectData cdata = MQTTPacket_connectData_initializer;
+	cdata.MQTTVersion = 3;
+	cdata.keepAliveInterval = 10;
+	cdata.clientID.cstring = (char*) DEVICE_STRING;
+	rc = MQTTConnect(&c, &cdata);
+	if (rc != 0)
+		UART_PRINT("rc from MQTT server is %d\n\r", rc);
+	else
+		UART_PRINT("connected to MQTT broker\n\r");
+
+	rc = MQTTSubscribe(&c, MQTT_TOPIC, QOS0, messageArrived);
+	if (rc != 0)
+		UART_PRINT("rc from MQTT subscribe is %d\n\r", rc);
+	//Handle Async Events
     while(1)
     {
-        //LED Actions
-        if(g_ucLEDStatus == LED_ON)
-        {
-            GPIO_IF_LedOn(MCU_RED_LED_GPIO);
-            osi_Sleep(500);
-        }
-        if(g_ucLEDStatus == LED_OFF)
-        {
-            GPIO_IF_LedOff(MCU_RED_LED_GPIO);
-            osi_Sleep(500);
-        }
-        if(g_ucLEDStatus==LED_BLINK)
-        {
-            GPIO_IF_LedOn(MCU_RED_LED_GPIO);
-            osi_Sleep(500);
-            GPIO_IF_LedOff(MCU_RED_LED_GPIO);
-            osi_Sleep(500);
-        }
+    	rc = MQTTYield(&c, 1000);
+    	if (rc != 0) {
+    		UART_PRINT("rc = %d\n\r", rc);
+    	}
+    	UART_PRINT("Loop\n\r");
+
     }
 }
 
@@ -1143,32 +1254,7 @@ void main()
       
     //Turn Off the LEDs
     GPIO_IF_LedOff(MCU_RED_LED_GPIO);
-       
-    //
-    // I2C Init
-    //
-    lRetVal = I2C_IF_Open(I2C_MASTER_MODE_FST);
-    if(lRetVal < 0)
-    {
-        ERR_PRINT(lRetVal);
-        LOOP_FOREVER();
-    }    
 
-    //Init Temprature Sensor
-    lRetVal = TMP006DrvOpen();
-    if(lRetVal < 0)
-    {
-        ERR_PRINT(lRetVal);
-        LOOP_FOREVER();
-    }    
-
-    //Init Accelerometer Sensor
-    lRetVal = BMA222Open();
-    if(lRetVal < 0)
-    {
-        ERR_PRINT(lRetVal);
-        LOOP_FOREVER();
-    }    
     
     //
     // Simplelinkspawntask
