@@ -1124,18 +1124,18 @@ static void OOBTask(void *pvParameters)
 	//Begin Doesn't work
 	//
 	//Setup Secure connection information
-//	SlSockSecureFiles_t sockSecureFiles;
-//	sockSecureFiles.secureFiles[0] = 0;
-//	sockSecureFiles.secureFiles[1] = 0;
-//	sockSecureFiles.secureFiles[2] = (char *)"/cert/mosquitto.der";
-//	sockSecureFiles.secureFiles[3] = 0;
-//	rc = TLSConnectNetwork(&n, "test.mosquitto.org", 8883, &sockSecureFiles, SL_SO_SEC_METHOD_SSLv3_TLSV1_2, SL_SEC_MASK_TLS_RSA_WITH_AES_256_CBC_SHA, 0);
+	SlSockSecureFiles_t sockSecureFiles;
+	sockSecureFiles.secureFiles[0] = 0;
+	sockSecureFiles.secureFiles[1] = 0;
+	sockSecureFiles.secureFiles[2] = (char *)"/cert/mosquitto.der";
+	sockSecureFiles.secureFiles[3] = 0;
+	rc = TLSConnectNetwork(&n, "test.mosquitto.org", 8883, &sockSecureFiles, SL_SO_SEC_METHOD_SSLv3_TLSV1_2, SL_SEC_MASK_TLS_RSA_WITH_AES_256_CBC_SHA, 0);
 	//
 	//End Doesn't Work
 	//
 
 	//Works - Unsecured
-	rc = ConnectNetwork(&n, "test.mosquitto.org", 1883);
+//	rc = ConnectNetwork(&n, "test.mosquitto.org", 1883);
 	UART_PRINT("Opened TCP Port to mqtt broker with return code %d\n\rConnecting to MQTT broker\n\r", rc);
 
 	MQTTClient(&c, &n, 1000, buf, 100, readbuf, 100);
