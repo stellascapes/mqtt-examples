@@ -118,6 +118,8 @@
 #define AUTO_CONNECTION_TIMEOUT_COUNT   50      /* 5 Sec */
 #define SL_STOP_TIMEOUT                 200
 
+#define SL_SSL_CA_CERT_FILE_NAME        "/cert/129.der"
+
 typedef enum
 {
   LED_OFF = 0,
@@ -1127,7 +1129,7 @@ static void OOBTask(void *pvParameters)
 	SlSockSecureFiles_t sockSecureFiles;
 	sockSecureFiles.secureFiles[0] = 0;
 	sockSecureFiles.secureFiles[1] = 0;
-	sockSecureFiles.secureFiles[2] = (char *)"/cert/mosquitto.der";
+	sockSecureFiles.secureFiles[2] = 129;
 	sockSecureFiles.secureFiles[3] = 0;
 	rc = TLSConnectNetwork(&n, "test.mosquitto.org", 8883, &sockSecureFiles, SL_SO_SEC_METHOD_SSLv3_TLSV1_2, SL_SEC_MASK_TLS_RSA_WITH_AES_256_CBC_SHA, 0);
 	//
