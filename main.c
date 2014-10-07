@@ -1131,7 +1131,7 @@ static void OOBTask(void *pvParameters)
 	sockSecureFiles.secureFiles[1] = 0;
 	sockSecureFiles.secureFiles[2] = 129;
 	sockSecureFiles.secureFiles[3] = 0;
-	rc = TLSConnectNetwork(&n, "test.mosquitto.org", 8883, &sockSecureFiles, SL_SO_SEC_METHOD_SSLv3_TLSV1_2, SL_SEC_MASK_TLS_RSA_WITH_AES_256_CBC_SHA, 0);
+	rc = TLSConnectNetwork(&n, "test.mosquitto.org", 8883, &sockSecureFiles, SL_SO_SEC_METHOD_SSLv3_TLSV1_2, SL_SEC_MASK_TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA, 0);
 	//
 	//End Doesn't Work
 	//
