@@ -103,7 +103,8 @@
 //New Includes
 #include "mqtt/MQTTClient.h"
 
-#define MQTT_TOPIC "ticc3200"
+#define MQTT_TOPIC_LEDS "ticc3200/leds/#"
+#define MQTT_TOPIC_BUTTONS "ticc3200/buttons/"
 #define DEVICE_STRING "ticc3200"
 
 #define min(X,Y) ((X) < (Y) ? (X) : (Y))
@@ -118,7 +119,11 @@
 #define AUTO_CONNECTION_TIMEOUT_COUNT   50      /* 5 Sec */
 #define SL_STOP_TIMEOUT                 200
 
+//#define USE_SSL
+
+#ifdef USE_SSL
 #define SL_SSL_CA_CERT_FILE_NAME        "/cert/129.der"
+#endif
 
 typedef enum
 {
@@ -684,8 +689,7 @@ void SimpleLinkHttpServerCallback(SlHttpServerEvent_t *pSlHttpServerEvent,
                     if(memcmp(ptr, "ON", 2) == 0)
                     {
                         GPIO_IF_LedOn(MCU_RED_LED_GPIO);
-                                                g_ucLEDStatus = LED_ON;
-
+                        g_ucLEDStatus = LED_ON;
                     }
                     else if(memcmp(ptr, "Blink", 5) == 0)
                     {
@@ -695,7 +699,7 @@ void SimpleLinkHttpServerCallback(SlHttpServerEvent_t *pSlHttpServerEvent,
                     else
                     {
                         GPIO_IF_LedOff(MCU_RED_LED_GPIO);
-                                                g_ucLEDStatus = LED_OFF;
+                        g_ucLEDStatus = LED_OFF;
                     }
                 }
                 else if(led == '2')
@@ -988,7 +992,6 @@ long ConnectToNetwork()
 
             //Waiting for the device to Auto Connect
             UART_PRINT("\t\t\tWaiting for the device to Auto Connect\n\r");
-            UART_PRINT("\t\t\t");
             while((!IS_CONNECTED(g_ulStatus)) || (!IS_IP_ACQUIRED(g_ulStatus)))
             {
                 MAP_UtilsDelay(500);              
@@ -1049,7 +1052,7 @@ static void ReadDeviceConfiguration()
 //
 //****************************************************************************
 Client c;
-char i=0;
+//char i=0;
 static unsigned char ASCIIToPin(char* str) {
 	unsigned char p;
 	if (str == 0) {
@@ -1070,57 +1073,86 @@ static void PinToASCII(char pin, char* str) {
 
 #define BUFF_SIZE 32
 static void messageArrived(MessageData* data) {
-	char buff[BUFF_SIZE];
+	char buf1[BUFF_SIZE];
+	char buf2[BUFF_SIZE];
 	unsigned char pinNum;
 	unsigned char ucPin;
 	unsigned int uiGPIOPort;
 	unsigned char ucGPIOPin;
 	unsigned char ucGPIOValue;
 
-	char *msg = data->message->payload;
-	strncpy(buff, msg, min(BUFF_SIZE, data->message->payloadlen));
-	buff[data->message->payloadlen] = 0;
+	char *tok;
 
-	if (data->message->payloadlen < 4) {//Too short
-		UART_PRINT("Short MSG: %s", buff);
+	strncpy(buf1, data->topicName->lenstring.data,
+		min(BUFF_SIZE, data->topicName->lenstring.len));
+	buf1[data->topicName->lenstring.len] = 0;
+
+	strncpy(buf2, data->message->payload,
+		min(BUFF_SIZE, data->message->payloadlen));
+	buf2[data->message->payloadlen] = 0;
+
+	UART_PRINT("topic:%.*s\n\r",
+		data->topicName->lenstring.len,
+		data->topicName->lenstring.data);
+	UART_PRINT("payload:%.*s\n\r",
+		data->message->payloadlen,
+		data->message->payload);
+
+	tok = strtok(buf1, "/");
+
+	for (int i=0;i<3&&tok!=NULL;i++) {
+		if (i == 2) {
+			if (strcmp(tok,"red")==0) {
+				UART_PRINT("Red:");
+				pinNum = 9;
+				if (strcmp(buf2,"on")==0) {
+					UART_PRINT("on\n\r");
+					ucGPIOValue = 1;
+				} else if (strcmp(buf2,"off")==0) {
+					UART_PRINT("off\n\r");
+					ucGPIOValue = 0;
+				} else {
+					UART_PRINT("undefined\n\r");
+					return;
+				}
+			} else if (strcmp(tok,"green")==0) {
+				UART_PRINT("Green:");
+				pinNum = 11;
+				if (strcmp(buf2,"on")==0) {
+					UART_PRINT("on\n\r");
+					ucGPIOValue = 1;
+				} else if (strcmp(buf2,"off")==0) {
+					UART_PRINT("off\n\r");
+					ucGPIOValue = 0;
+				} else {
+					UART_PRINT("undefined\n\r");
+					return;
+				}
+			} else if (strcmp(tok,"yellow")==0) {
+				UART_PRINT("Yellow:");
+				pinNum = 10;
+				if (strcmp(buf2,"on")==0) {
+					UART_PRINT("on\n\r");
+					ucGPIOValue = 1;
+				} else if (strcmp(buf2,"off")==0) {
+					UART_PRINT("off\n\r");
+					ucGPIOValue = 0;
+				} else {
+					UART_PRINT("undefined\n\r");
+					return;
+				}
+			} else {
+				UART_PRINT("Unrecognized led!\n\r");
+				return;
+			}
+		}
+		tok = strtok(NULL, "/");
 	}
-	//Modify a pin
-	if (msg[0] == 'P') {
-		pinNum = ASCIIToPin(&msg[1]);
-		//Get pin ports
-		GPIO_IF_GetPortNPin(pinNum, &uiGPIOPort, &ucGPIOPin);
 
-		if (msg[3] != ':') {
-			UART_PRINT("Invalid Msg: %s", buff);
-		}
-		if (msg[4] == 'H') { //Set High
-			ucGPIOValue = 1;
-			GPIO_IF_Set(pinNum, uiGPIOPort, ucGPIOPin, ucGPIOValue);
-			UART_PRINT("Pin %d High\n\r", pinNum);
-		}
-		else if (msg[4] == 'L') { //Set Low
-			ucGPIOValue = 0;
-			GPIO_IF_Set(pinNum, uiGPIOPort, ucGPIOPin, ucGPIOValue);
-			UART_PRINT("Pin %d low\n\r", pinNum);
-		}
-		else if (msg[4] == '?') { //Return Status
-			//ucGPIOValue = GPIO_IF_Get(pinNum, uiGPIOPort, ucGPIOPin);
+	GPIO_IF_GetPortNPin(pinNum, &uiGPIOPort, &ucGPIOPin);
+	GPIO_IF_Set(pinNum, uiGPIOPort, ucGPIOPin, ucGPIOValue);
 
-			MQTTMessage msg;
-			msg.dup = 0;
-			msg.id = i++;
-			buff[0] = 'S';
-			PinToASCII(pinNum, &buff[1]);
-			buff[3] = ' ';
-			buff[4] = GPIO_IF_Get(pinNum, uiGPIOPort, ucGPIOPin) ? 'H' : 'L';
-			msg.payload = &buff;
-			msg.payloadlen = 5;
-			msg.qos = QOS0;
-			msg.retained = 0;
-			int rc = MQTTPublish(&c, MQTT_TOPIC, &msg);
-			UART_PRINT("Pin %d Status: %c rc: %d\n\r", pinNum, buff[4], rc);
-		}
-	}
+	return;
 }
 
 static void OOBTask(void *pvParameters)
@@ -1150,24 +1182,18 @@ static void OOBTask(void *pvParameters)
 
 	NewNetwork(&n);
 	UART_PRINT("Connecting Socket\n\r");
-	//
-	//Begin Doesn't work
-	//
+#ifdef USE_SSL	
 	//Setup Secure connection information
-	/*
 	SlSockSecureFiles_t sockSecureFiles;
 	sockSecureFiles.secureFiles[0] = 0;
 	sockSecureFiles.secureFiles[1] = 0;
 	sockSecureFiles.secureFiles[2] = 129;
 	sockSecureFiles.secureFiles[3] = 0;
 	rc = TLSConnectNetwork(&n, "test.mosquitto.org", 8883, &sockSecureFiles, SL_SO_SEC_METHOD_SSLv3_TLSV1_2, SL_SEC_MASK_TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA, 0);
-	*/
-	//
-	//End Doesn't Work
-	//
-
+#else	
 	//Works - Unsecured
 	rc = ConnectNetwork(&n, "test.mosquitto.org", 1883);
+#endif
 	UART_PRINT("Opened TCP Port to mqtt broker with return code %d\n\rConnecting to MQTT broker\n\r", rc);
 
 	MQTTClient(&c, &n, 1000, buf, 100, readbuf, 100);
@@ -1181,7 +1207,7 @@ static void OOBTask(void *pvParameters)
 	else
 		UART_PRINT("connected to MQTT broker\n\r");
 
-	rc = MQTTSubscribe(&c, MQTT_TOPIC, QOS0, messageArrived);
+	rc = MQTTSubscribe(&c, MQTT_TOPIC_LEDS, QOS0, messageArrived);
 	if (rc != 0)
 		UART_PRINT("rc from MQTT subscribe is %d\n\r", rc);
 	//Handle Async Events
