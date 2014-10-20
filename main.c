@@ -144,7 +144,7 @@ static unsigned char  g_ucConnectionSSID[SSID_LEN_MAX+1]; //Connection SSID
 static unsigned char  g_ucConnectionBSSID[BSSID_LEN_MAX]; //Connection BSSID
 
 
-#if defined(ccs)
+#if defined(ccs) || defined(gcc)
 extern void (* const g_pfnVectors[])(void);
 #endif
 #if defined(ewarm)
@@ -860,12 +860,20 @@ long ConnectToNetwork()
     unsigned int uiConnectTimeoutCnt =0;
 
     // staring simplelink
+    UART_PRINT("\t\tStarting SimpleLink...\n\r");
     lRetVal =  sl_Start(NULL,NULL,NULL);
+    UART_PRINT("\t\tDone!\n\r");
     ASSERT_ON_ERROR( lRetVal);
+
+    //UART_PRINT("\t\tClearing WLAN profiles (debug!)...\n\r");
+    //lRetVal = sl_WlanProfileDel(0xff);
+    //ASSERT_ON_ERROR(lRetVal);
+    //UART_PRINT("\t\tDone!\n\r");
 
     // Device is in AP Mode and Force AP Jumper is not Connected
     if(ROLE_STA != lRetVal && g_uiDeviceModeConfig == ROLE_STA )
     {
+        UART_PRINT("\t\tDevice is in AP Mode and Force AP Jumper is not Connected\n\r");
         if (ROLE_AP == lRetVal)
         {
             // If the device is in AP mode, we need to wait for this event 
@@ -878,6 +886,7 @@ long ConnectToNetwork()
             }
         }
         //Switch to STA Mode
+        UART_PRINT("\t\tSwitch to STA Mode\n\r");
         lRetVal = ConfigureMode(ROLE_STA);
         ASSERT_ON_ERROR( lRetVal);
     }
@@ -885,7 +894,9 @@ long ConnectToNetwork()
     //Device is in STA Mode and Force AP Jumper is Connected
     if(ROLE_AP != lRetVal && g_uiDeviceModeConfig == ROLE_AP )
     {
+         UART_PRINT("\t\tDevice is in STA Mode and Force AP Jumper is Connected\n\r");
          //Switch to AP Mode
+         UART_PRINT("\t\tSwitch to AP Mode\n\r");
          lRetVal = ConfigureMode(ROLE_AP);
          ASSERT_ON_ERROR( lRetVal);
 
@@ -894,15 +905,18 @@ long ConnectToNetwork()
     //No Mode Change Required
     if(lRetVal == ROLE_AP)
     {
+        UART_PRINT("\t\tNo Mode Change Required (ROLE_AP)\n\r");
         //waiting for the AP to acquire IP address from Internal DHCP Server
         // If the device is in AP mode, we need to wait for this event 
         // before doing anything 
+        UART_PRINT("\t\tWaiting for IP...\n\r");
         while(!IS_IP_ACQUIRED(g_ulStatus))
         {
         #ifndef SL_PLATFORM_MULTI_THREADED
             _SlNonOsMainLoopTask(); 
         #endif
         }
+        UART_PRINT("\t\tDone!\n\r");
         //Stop Internal HTTP Server
         lRetVal = sl_NetAppStop(SL_NET_APP_HTTP_SERVER_ID);
         ASSERT_ON_ERROR( lRetVal);
@@ -933,6 +947,7 @@ long ConnectToNetwork()
     }
     else
     {
+        UART_PRINT("\t\tNo Mode Change Required (ROLE_STA)\n\r");
         //Stop Internal HTTP Server
         lRetVal = sl_NetAppStop(SL_NET_APP_HTTP_SERVER_ID);
         ASSERT_ON_ERROR( lRetVal);
@@ -942,6 +957,7 @@ long ConnectToNetwork()
         ASSERT_ON_ERROR( lRetVal);
 
     	//waiting for the device to Auto Connect
+        UART_PRINT("\t\twaiting for the device to Auto Connect\n\r");
         while(uiConnectTimeoutCnt<AUTO_CONNECTION_TIMEOUT_COUNT &&
             ((!IS_CONNECTED(g_ulStatus)) || (!IS_IP_ACQUIRED(g_ulStatus)))) 
         {
@@ -958,25 +974,33 @@ long ConnectToNetwork()
         //Couldn't connect Using Auto Profile
         if(uiConnectTimeoutCnt == AUTO_CONNECTION_TIMEOUT_COUNT)
         {
+            UART_PRINT("\t\t\tCouldn't connect Using Auto Profile\n\r");
             //Blink Red LED to Indicate Connection Error
             GPIO_IF_LedOn(MCU_RED_LED_GPIO);
             
             CLR_STATUS_BIT_ALL(g_ulStatus);
 
             //Connect Using Smart Config
+            UART_PRINT("\t\t\tConnect Using Smart Config\n\r");
             lRetVal = SmartConfigConnect();
             ASSERT_ON_ERROR(lRetVal);
+            UART_PRINT("\t\t\tDone!\n\r");
 
             //Waiting for the device to Auto Connect
+            UART_PRINT("\t\t\tWaiting for the device to Auto Connect\n\r");
+            UART_PRINT("\t\t\t");
             while((!IS_CONNECTED(g_ulStatus)) || (!IS_IP_ACQUIRED(g_ulStatus)))
             {
                 MAP_UtilsDelay(500);              
             }
+            UART_PRINT("\t\t\tDone!\n\r");
     }
     //Turn RED LED Off
     GPIO_IF_LedOff(MCU_RED_LED_GPIO);
 
+    UART_PRINT("\t\tTesting connection...\n\r");
     g_iInternetAccess = ConnectionTest();
+    UART_PRINT("\t\tDone!\n\r");
 
     }
     return SUCCESS;
@@ -1110,10 +1134,14 @@ static void OOBTask(void *pvParameters)
     long   lRetVal = -1;
 
     //Read Device Mode Configuration
+    UART_PRINT("\tReading device configuration...\n\r");
     ReadDeviceConfiguration();
+    UART_PRINT("\tDone!\n\r");
 
     //Connect to Network
+    UART_PRINT("\tConnecting to network...\n\r");
     lRetVal = ConnectToNetwork();
+    UART_PRINT("\tDone!\n\r");
     if(lRetVal < 0)
     {
         ERR_PRINT(lRetVal);
@@ -1126,18 +1154,20 @@ static void OOBTask(void *pvParameters)
 	//Begin Doesn't work
 	//
 	//Setup Secure connection information
+	/*
 	SlSockSecureFiles_t sockSecureFiles;
 	sockSecureFiles.secureFiles[0] = 0;
 	sockSecureFiles.secureFiles[1] = 0;
 	sockSecureFiles.secureFiles[2] = 129;
 	sockSecureFiles.secureFiles[3] = 0;
 	rc = TLSConnectNetwork(&n, "test.mosquitto.org", 8883, &sockSecureFiles, SL_SO_SEC_METHOD_SSLv3_TLSV1_2, SL_SEC_MASK_TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA, 0);
+	*/
 	//
 	//End Doesn't Work
 	//
 
 	//Works - Unsecured
-//	rc = ConnectNetwork(&n, "test.mosquitto.org", 1883);
+	rc = ConnectNetwork(&n, "test.mosquitto.org", 1883);
 	UART_PRINT("Opened TCP Port to mqtt broker with return code %d\n\rConnecting to MQTT broker\n\r", rc);
 
 	MQTTClient(&c, &n, 1000, buf, 100, readbuf, 100);
@@ -1202,7 +1232,7 @@ BoardInit(void)
     //
     // Set vector table base
     //
-#if defined(ccs)
+#if defined(ccs) || defined(gcc)
     MAP_IntVTableBaseSet((unsigned long)&g_pfnVectors[0]);
 #endif  //ccs
 #if defined(ewarm)
@@ -1261,6 +1291,7 @@ void main()
     //
     // Simplelinkspawntask
     //
+    UART_PRINT("Spawning tasks...\n\r");
     lRetVal = VStartSimpleLinkSpawnTask(SPAWN_TASK_PRIORITY);
     if(lRetVal < 0)
     {
@@ -1271,6 +1302,7 @@ void main()
     //
     // Create OOB Task
     //
+    UART_PRINT("Creating OOB task...\n\r");
     lRetVal = osi_TaskCreate(OOBTask, (signed char*)"OOBTask", \
                                 OSI_STACK_SIZE, NULL, \
                                 OOB_TASK_PRIORITY, NULL );
@@ -1283,6 +1315,7 @@ void main()
     //
     // Start OS Scheduler
     //
+    UART_PRINT("Starting OS scheduler...\n\r");
     osi_start();
 
     while (1)
