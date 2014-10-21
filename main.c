@@ -1073,8 +1073,7 @@ static void PinToASCII(char pin, char* str) {
 
 #define BUFF_SIZE 32
 static void messageArrived(MessageData* data) {
-	char buf1[BUFF_SIZE];
-	char buf2[BUFF_SIZE];
+	char buf[BUFF_SIZE];
 	unsigned char pinNum;
 	unsigned char ucPin;
 	unsigned int uiGPIOPort;
@@ -1083,13 +1082,20 @@ static void messageArrived(MessageData* data) {
 
 	char *tok;
 
-	strncpy(buf1, data->topicName->lenstring.data,
-		min(BUFF_SIZE, data->topicName->lenstring.len));
-	buf1[data->topicName->lenstring.len] = 0;
+	// Check for buffer overflow
+	if (data->topicName->lenstring.len >= BUFF_SIZE) {
+		UART_PRINT("Topic name too long!\n\r");
+		return;
+	}
+	if (data->message->payloadlen >= BUFF_SIZE) {
+		UART_PRINT("Payload too long!\n\r");
+		return;
+	}
 
-	strncpy(buf2, data->message->payload,
-		min(BUFF_SIZE, data->message->payloadlen));
-	buf2[data->message->payloadlen] = 0;
+	strncpy(buf, data->topicName->lenstring.data,
+		min(BUFF_SIZE, data->topicName->lenstring.len));
+	buf[data->topicName->lenstring.len] = 0;
+
 
 	UART_PRINT("topic:%.*s\n\r",
 		data->topicName->lenstring.len,
@@ -1098,55 +1104,42 @@ static void messageArrived(MessageData* data) {
 		data->message->payloadlen,
 		data->message->payload);
 
-	tok = strtok(buf1, "/");
+	// Find pin number from topic string
+	tok = strtok(buf, "/");
 
 	for (int i=0;i<3&&tok!=NULL;i++) {
 		if (i == 2) {
 			if (strcmp(tok,"red")==0) {
 				UART_PRINT("Red:");
 				pinNum = 9;
-				if (strcmp(buf2,"on")==0) {
-					UART_PRINT("on\n\r");
-					ucGPIOValue = 1;
-				} else if (strcmp(buf2,"off")==0) {
-					UART_PRINT("off\n\r");
-					ucGPIOValue = 0;
-				} else {
-					UART_PRINT("undefined\n\r");
-					return;
-				}
 			} else if (strcmp(tok,"green")==0) {
 				UART_PRINT("Green:");
 				pinNum = 11;
-				if (strcmp(buf2,"on")==0) {
-					UART_PRINT("on\n\r");
-					ucGPIOValue = 1;
-				} else if (strcmp(buf2,"off")==0) {
-					UART_PRINT("off\n\r");
-					ucGPIOValue = 0;
-				} else {
-					UART_PRINT("undefined\n\r");
-					return;
-				}
 			} else if (strcmp(tok,"yellow")==0) {
 				UART_PRINT("Yellow:");
 				pinNum = 10;
-				if (strcmp(buf2,"on")==0) {
-					UART_PRINT("on\n\r");
-					ucGPIOValue = 1;
-				} else if (strcmp(buf2,"off")==0) {
-					UART_PRINT("off\n\r");
-					ucGPIOValue = 0;
-				} else {
-					UART_PRINT("undefined\n\r");
-					return;
-				}
 			} else {
 				UART_PRINT("Unrecognized led!\n\r");
 				return;
 			}
 		}
 		tok = strtok(NULL, "/");
+	}
+
+	strncpy(buf, data->message->payload,
+		min(BUFF_SIZE, data->message->payloadlen));
+	buf[data->message->payloadlen] = 0;
+	
+	// Find pin state from payload string
+	if (strcmp(buf,"on")==0) {
+		UART_PRINT("on\n\r");
+		ucGPIOValue = 1;
+	} else if (strcmp(buf,"off")==0) {
+		UART_PRINT("off\n\r");
+		ucGPIOValue = 0;
+	} else {
+		UART_PRINT("undefined\n\r");
+		return;
 	}
 
 	GPIO_IF_GetPortNPin(pinNum, &uiGPIOPort, &ucGPIOPin);
