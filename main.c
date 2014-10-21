@@ -104,14 +104,20 @@
 #include "mqtt/MQTTClient.h"
 
 #define MQTT_TOPIC_LEDS "ticc3200/leds/#"
-#define MQTT_TOPIC_BUTTONS "ticc3200/buttons/"
-#define DEVICE_STRING "ticc3200"
+#define MQTT_TOPIC_BUTTON1 "ticc3200/buttons/1"
+#define MQTT_TOPIC_BUTTON2 "ticc3200/buttons/2"
+#define DEVICE_STRING_SUB "ticc3200-sub"
+#define DEVICE_STRING_PUB "ticc3200-pub"
+
+// MQTT message buffer size
+#define BUFF_SIZE 32
 
 #define min(X,Y) ((X) < (Y) ? (X) : (Y))
 
 #define APPLICATION_VERSION              "1.1.0"
 #define APP_NAME                         "Out of Box"
-#define OOB_TASK_PRIORITY                1
+#define OOB_TASK_PRIORITY                2
+#define BUTTON_NOTIFY_TASK_PRIORITY      2
 #define SPAWN_TASK_PRIORITY              9
 #define OSI_STACK_SIZE                   2048
 #define AP_SSID_LEN_MAX                 32
@@ -148,7 +154,6 @@ static unsigned long  g_ulStatus = 0;//SimpleLink Status
 static unsigned char  g_ucConnectionSSID[SSID_LEN_MAX+1]; //Connection SSID
 static unsigned char  g_ucConnectionBSSID[BSSID_LEN_MAX]; //Connection BSSID
 
-
 #if defined(ccs) || defined(gcc)
 extern void (* const g_pfnVectors[])(void);
 #endif
@@ -174,6 +179,8 @@ extern uVectorEntry __vector_table;
 void
 vApplicationTickHook( void )
 {
+    // MQTT library needs a millisecond tick too :)
+    milliInterrupt();
 }
 
 //*****************************************************************************
@@ -1003,7 +1010,7 @@ long ConnectToNetwork()
 
     UART_PRINT("\t\tTesting connection...\n\r");
     g_iInternetAccess = ConnectionTest();
-    UART_PRINT("\t\tDone!\n\r");
+    UART_PRINT("\t\tDone (%d)\n\r", g_iInternetAccess);
 
     }
     return SUCCESS;
@@ -1044,34 +1051,13 @@ static void ReadDeviceConfiguration()
 
 //****************************************************************************
 //
-//!    \brief OOB Application Main Task - Initializes SimpleLink Driver and
-//!                                              Handles HTTP Requests
-//! \param[in]                  pvParameters is the data passed to the Task
+//!    \brief MQTT message received callback - Called when a subscribed topic
+//!                                            receives a message.
+//! \param[in]                  data is the data passed to the callback
 //!
 //! \return                        None
 //
 //****************************************************************************
-Client c;
-//char i=0;
-static unsigned char ASCIIToPin(char* str) {
-	unsigned char p;
-	if (str == 0) {
-		return 0;
-	}
-	if (str[0] > '9' || str[0] < '0' || str[1] > '9' || str[1] < '0')
-		return 0;
-	p = ((str[0] - '0') * 10);
-	p += (str[1] - '0');
-	return p;
-}
-static void PinToASCII(char pin, char* str) {
-	if (str == 0)
-		return;
-	str[0] = '0' + (pin / 10);
-	str[1] = '0' + (pin % 10);
-}
-
-#define BUFF_SIZE 32
 static void messageArrived(MessageData* data) {
 	char buf[BUFF_SIZE];
 	unsigned char pinNum;
@@ -1148,13 +1134,23 @@ static void messageArrived(MessageData* data) {
 	return;
 }
 
+//****************************************************************************
+//
+//!    \brief OOB Application Main Task - Initializes SimpleLink Driver and
+//!                                              Handles HTTP Requests
+//! \param[in]                  pvParameters is the data passed to the Task
+//!
+//! \return                        None
+//
+//****************************************************************************
 static void OOBTask(void *pvParameters)
 {
-	Network n;
+    Network n;
+    Client hMQTTClient;
 
-	int rc = 0;
-	unsigned char buf[100];
-	unsigned char readbuf[100];
+    int rc = 0;
+    unsigned char buf[100];
+    unsigned char readbuf[100];
 
     long   lRetVal = -1;
 
@@ -1173,45 +1169,170 @@ static void OOBTask(void *pvParameters)
         LOOP_FOREVER();
     }
 
-	NewNetwork(&n);
-	UART_PRINT("Connecting Socket\n\r");
+    NewNetwork(&n);
+    UART_PRINT("Connecting Socket\n\r");
 #ifdef USE_SSL	
-	//Setup Secure connection information
-	SlSockSecureFiles_t sockSecureFiles;
-	sockSecureFiles.secureFiles[0] = 0;
-	sockSecureFiles.secureFiles[1] = 0;
-	sockSecureFiles.secureFiles[2] = 129;
-	sockSecureFiles.secureFiles[3] = 0;
-	rc = TLSConnectNetwork(&n, "test.mosquitto.org", 8883, &sockSecureFiles, SL_SO_SEC_METHOD_SSLv3_TLSV1_2, SL_SEC_MASK_TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA, 0);
+    //Setup Secure connection information
+    SlSockSecureFiles_t sockSecureFiles;
+    sockSecureFiles.secureFiles[0] = 0;
+    sockSecureFiles.secureFiles[1] = 0;
+    sockSecureFiles.secureFiles[2] = 129;
+    sockSecureFiles.secureFiles[3] = 0;
+    rc = TLSConnectNetwork(&n, "test.mosquitto.org", 8883,
+                           &sockSecureFiles,
+			   SL_SO_SEC_METHOD_SSLv3_TLSV1_2,
+			   SL_SEC_MASK_TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA, 0);
 #else	
-	//Works - Unsecured
-	rc = ConnectNetwork(&n, "test.mosquitto.org", 1883);
+    //Works - Unsecured
+    rc = ConnectNetwork(&n, "test.mosquitto.org", 1883);
 #endif
-	UART_PRINT("Opened TCP Port to mqtt broker with return code %d\n\rConnecting to MQTT broker\n\r", rc);
+    UART_PRINT("Opened TCP Port to mqtt broker with return code %d\n\rConnecting to MQTT broker\n\r", rc);
 
-	MQTTClient(&c, &n, 1000, buf, 100, readbuf, 100);
-	MQTTPacket_connectData cdata = MQTTPacket_connectData_initializer;
-	cdata.MQTTVersion = 3;
-	cdata.keepAliveInterval = 10;
-	cdata.clientID.cstring = (char*) DEVICE_STRING;
-	rc = MQTTConnect(&c, &cdata);
-	if (rc != 0)
-		UART_PRINT("rc from MQTT server is %d\n\r", rc);
-	else
-		UART_PRINT("connected to MQTT broker\n\r");
+    MQTTClient(&hMQTTClient, &n, 1000, buf, 100, readbuf, 100);
+    MQTTPacket_connectData cdata = MQTTPacket_connectData_initializer;
+    cdata.MQTTVersion = 3;
+    cdata.keepAliveInterval = 10;
+    cdata.clientID.cstring = (char*) DEVICE_STRING_SUB;
+    rc = MQTTConnect(&hMQTTClient, &cdata);
+    if (rc != 0) {
+        UART_PRINT("rc from MQTT server is %d\n\r", rc);
+    } else {
+        UART_PRINT("connected to MQTT broker\n\r");
+    }
+    UART_PRINT("\tsocket=%d\n\r", n.my_socket);
 
-	rc = MQTTSubscribe(&c, MQTT_TOPIC_LEDS, QOS0, messageArrived);
-	if (rc != 0)
-		UART_PRINT("rc from MQTT subscribe is %d\n\r", rc);
-	//Handle Async Events
-    while(1)
-    {
-    	rc = MQTTYield(&c, 1000);
-    	if (rc != 0) {
-    		UART_PRINT("rc = %d\n\r", rc);
-    	}
-    	UART_PRINT("Loop\n\r");
+    rc = MQTTSubscribe(&hMQTTClient, MQTT_TOPIC_LEDS, QOS0, messageArrived);
+    if (rc != 0)
+        UART_PRINT("rc from MQTT subscribe is %d\n\r", rc);
+    //Handle Async Events
+    while(1) {
+        rc = MQTTYield(&hMQTTClient, 10);
+        if (rc != 0) {
+            UART_PRINT("rc = %d\n\r", rc);
+        }
+        osi_Sleep(50);
+        UART_PRINT("Loop\n\r");
+    }
+}
 
+//****************************************************************************
+//
+//! \brief ButtonNotify Task - Reads button states and publishes data to MQTT
+//!                            broker.
+//! \param[in]                  pvParameters is the data passed to the Task
+//!
+//! \return                        None
+//
+//****************************************************************************
+static void ButtonNotifyTask(void *pvParameters)
+{
+    static unsigned int msg_id = 0;
+    Network n;
+    Client hMQTTClient;
+    int rc = 0;
+    unsigned char buf[100];
+    unsigned char readbuf[100];
+
+    unsigned char sw2_pinNum = 22;
+    unsigned char sw2_ucPin;
+    unsigned int sw2_uiGPIOPort;
+    unsigned char sw2_ucGPIOPin;
+    unsigned char sw2_ucGPIOValue;
+    unsigned char sw2_ucSent;
+    GPIO_IF_GetPortNPin(sw2_pinNum, &sw2_uiGPIOPort, &sw2_ucGPIOPin);
+    
+    unsigned char sw3_pinNum = 13;
+    unsigned char sw3_ucPin;
+    unsigned int sw3_uiGPIOPort;
+    unsigned char sw3_ucGPIOPin;
+    unsigned char sw3_ucGPIOValue;
+    unsigned char sw3_ucSent;
+    GPIO_IF_GetPortNPin(sw3_pinNum, &sw3_uiGPIOPort, &sw3_ucGPIOPin);
+
+    // Wait for a connection
+    while (1) {
+        while (g_iInternetAccess != 0) {}
+
+        NewNetwork(&n);
+        UART_PRINT("Connecting Socket\n\r");
+#ifdef USE_SSL  
+        //Setup Secure connection information
+        SlSockSecureFiles_t sockSecureFiles;
+        sockSecureFiles.secureFiles[0] = 0;
+        sockSecureFiles.secureFiles[1] = 0;
+        sockSecureFiles.secureFiles[2] = 129;
+        sockSecureFiles.secureFiles[3] = 0;
+        rc = TLSConnectNetwork(&n, "test.mosquitto.org", 8883,
+                               &sockSecureFiles,
+                               SL_SO_SEC_METHOD_SSLv3_TLSV1_2,
+                               SL_SEC_MASK_TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA, 0);
+#else
+        //Works - Unsecured
+        rc = ConnectNetwork(&n, "test.mosquitto.org", 1883);
+#endif
+        UART_PRINT("Opened TCP Port to mqtt broker with return code %d\n\rConnecting to MQTT broker\n\r", rc);
+
+        MQTTClient(&hMQTTClient, &n, 1000, buf, 100, readbuf, 100);
+        MQTTPacket_connectData cdata = MQTTPacket_connectData_initializer;
+        cdata.MQTTVersion = 3;
+        cdata.keepAliveInterval = 10;
+        cdata.clientID.cstring = (char*) DEVICE_STRING_PUB;
+        rc = MQTTConnect(&hMQTTClient, &cdata);
+        if (rc != 0) {
+            UART_PRINT("rc from MQTT server is %d\n\r", rc);
+        } else {
+            UART_PRINT("connected to MQTT broker\n\r");
+        }
+	UART_PRINT("\tsocket=%d\n\r", n.my_socket);
+    
+        while (1) {
+            sw2_ucGPIOValue = GPIO_IF_Get(sw2_pinNum, sw2_uiGPIOPort, sw2_ucGPIOPin);
+            sw3_ucGPIOValue = GPIO_IF_Get(sw3_pinNum, sw3_uiGPIOPort, sw3_ucGPIOPin);
+            if (sw2_ucGPIOValue) {
+                if (!sw2_ucSent) {
+	            UART_PRINT("SW2\n\r");
+                    sw2_ucSent = 1;
+                    MQTTMessage msg;
+                    msg.dup = 0;
+                    msg.id = msg_id++;
+                    msg.payload = "pushed";
+                    msg.payloadlen = 7;
+                    msg.qos = QOS0;
+                    msg.retained = 0;
+                    int rc = MQTTPublish(&hMQTTClient, MQTT_TOPIC_BUTTON1, &msg);
+                    UART_PRINT("SW2, rc=%d\n\r", rc);
+		    if (rc != 0)
+                        break;
+                }
+            } else {
+                sw2_ucSent = 0;
+            }
+            if (sw3_ucGPIOValue) {
+                if (!sw3_ucSent) {
+	            UART_PRINT("SW3\n\r");
+	            sw3_ucSent = 1;
+                    MQTTMessage msg;
+                    msg.dup = 0;
+                    msg.id = msg_id++;
+                    msg.payload = "pushed";
+                    msg.payloadlen = 7;
+                    msg.qos = QOS0;
+                    msg.retained = 0;
+                    int rc = MQTTPublish(&hMQTTClient, MQTT_TOPIC_BUTTON2, &msg);
+                    UART_PRINT("SW3, rc=%d\n\r", rc);
+		    if (rc != 0)
+                        break;
+                }
+            } else {
+                sw3_ucSent = 0;
+            }
+            rc = MQTTYield(&hMQTTClient, 10);
+            if (rc != 0) {
+                UART_PRINT("rc = %d\n\r", rc);
+		break;
+            }
+            osi_Sleep(50);
+        }
     }
 }
 
@@ -1330,6 +1451,19 @@ void main()
         ERR_PRINT(lRetVal);
         LOOP_FOREVER();
     }    
+
+    //
+    // Create ButtonNotify Task
+    //
+    UART_PRINT("Creating ButtonNotify task...\n\r");
+    lRetVal = osi_TaskCreate(ButtonNotifyTask, (signed char*)"BtnTask", \
+                                OSI_STACK_SIZE, NULL, \
+                                BUTTON_NOTIFY_TASK_PRIORITY, NULL );
+    if(lRetVal < 0)
+    {
+        ERR_PRINT(lRetVal);
+        LOOP_FOREVER();
+    }
 
     //
     // Start OS Scheduler

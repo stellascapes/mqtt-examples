@@ -40,6 +40,8 @@ struct Network
 	void (*disconnect) (Network*);
 };
 
+void milliInterrupt(void);
+
 char expired(Timer*);
 void countdown_ms(Timer*, unsigned int);
 void countdown(Timer*, unsigned int);
